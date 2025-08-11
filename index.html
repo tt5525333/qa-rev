@@ -97,7 +97,7 @@ body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Ar
 
 <script>
 /* ===== 你的設定 ===== */
-const API_URL = 'https://script.google.com/macros/s/AKfycbzK2fI0SQRp8WaRR6yXay4e1lozao1DOnEasy0EjiAWheK05uXBT2vrKTUxzXxHgJdx/exec'; // 換成 /exec 連結
+const API_URL = 'https://script.google.com/macros/s/AKfycbzK2fI0SQRp8WaRR6yXay4e1lozao1DOnEasy0EjiAWheK05uXBT2vrKTUxzXxHgJdx/exec';
 const DEFAULT_AVATAR = 'https://i.ibb.co/23PY9v5z/image.jpg';
 const PER_PAGE = 5;
 
@@ -125,7 +125,19 @@ function fmtTime(t){
   }).replace(/\//g, '/');
 }
 
-/* 捲到標籤欄頂端 */
+/* ===== iframe 自動高度：回報父頁面 ===== */
+function debounce(fn, wait=80){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), wait); }; }
+const postHeight = debounce(() => {
+  const h = document.documentElement.scrollHeight;
+  // 父頁面會做 origin 過濾；這裡用 * 方便跨網域嵌入
+  window.parent?.postMessage({ type:'setHeight', height:h }, '*');
+}, 50);
+window.addEventListener('load', postHeight);
+window.addEventListener('resize', postHeight);
+// DOM 變化時（資料渲染、切頁、分頁）也回報
+new MutationObserver(postHeight).observe(document.body, { childList:true, subtree:true });
+
+/* 捲到標籤欄頂端（原功能保留於非 iframe 使用情境） */
 function scrollToTabs(){
   const el = document.querySelector('.tabs');
   const top = el ? el.offsetTop : 0;
@@ -229,7 +241,8 @@ function renderQA(){
   const totalPages=Math.max(1, Math.ceil(state.qaAll.length/PER_PAGE));
   const start=(state.qaPage-1)*PER_PAGE;
   list.innerHTML=''; state.qaAll.slice(start,start+PER_PAGE).forEach(q=>list.appendChild(questionCard(q)));
-  buildPager(pager, totalPages, state.qaPage, p=>{ state.qaPage=p; renderQA(); scrollToTabs(); });
+  buildPager(pager, totalPages, state.qaPage, p=>{ state.qaPage=p; renderQA(); postHeight(); });
+  postHeight();
 }
 function renderREV(){
   const list=document.getElementById('rev-list');
@@ -237,7 +250,8 @@ function renderREV(){
   const totalPages=Math.max(1, Math.ceil(state.revAll.length/PER_PAGE));
   const start=(state.revPage-1)*PER_PAGE;
   list.innerHTML=''; state.revAll.slice(start,start+PER_PAGE).forEach(r=>list.appendChild(reviewCard(r)));
-  buildPager(pager, totalPages, state.revPage, p=>{ state.revPage=p; renderREV(); scrollToTabs(); });
+  buildPager(pager, totalPages, state.revPage, p=>{ state.revPage=p; renderREV(); postHeight(); });
+  postHeight();
 }
 
 /* 讀取快取（若新鮮則直接渲染） */
@@ -291,6 +305,7 @@ async function fetchRemote(){
 
     renderQA(); renderREV();
     saveCache();
+    postHeight();
   }catch(err){
     console.error('fetchRemote error:', err);
   }
@@ -315,7 +330,8 @@ tabs.forEach(t=>{
     Object.values(panels).forEach(p=>p.setAttribute('aria-hidden','true'));
     t.setAttribute('aria-selected','true');
     panels[t.id].setAttribute('aria-hidden','false');
-    scrollToTabs();
+    // 在 iframe 內，切換內容後也主動回報高度
+    postHeight();
   });
 });
 
