@@ -125,19 +125,21 @@ function fmtTime(t){
   }).replace(/\//g, '/');
 }
 
-/* ===== iframe 自動高度：回報父頁面 ===== */
+/* ===== iframe 自動高度：回報父頁面（防抖＋變更才回報） ===== */
 function debounce(fn, wait=80){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), wait); }; }
+let lastH = 0;
 const postHeight = debounce(() => {
-  const h = document.documentElement.scrollHeight;
-  // 父頁面會做 origin 過濾；這裡用 * 方便跨網域嵌入
-  window.parent?.postMessage({ type:'setHeight', height:h }, '*');
+  const h = Math.max(120, Math.min(5000, document.documentElement.scrollHeight));
+  if (Math.abs(h - lastH) > 5) {
+    lastH = h;
+    window.parent?.postMessage({ type:'setHeight', height:h }, '*');
+  }
 }, 50);
 window.addEventListener('load', postHeight);
 window.addEventListener('resize', postHeight);
-// DOM 變化時（資料渲染、切頁、分頁）也回報
-new MutationObserver(postHeight).observe(document.body, { childList:true, subtree:true });
+new MutationObserver(postHeight).observe(document.body, { childList:true, subtree:true, attributes:true, characterData:true });
 
-/* 捲到標籤欄頂端（原功能保留於非 iframe 使用情境） */
+/* 捲到標籤欄頂端（非 iframe 情境用） */
 function scrollToTabs(){
   const el = document.querySelector('.tabs');
   const top = el ? el.offsetTop : 0;
@@ -207,7 +209,6 @@ function reviewCard(r){
             <div class="meta">${fmtTime(r.time)}</div>
           </div>
         </div>
-        <!-- 右上角：課名 + 星星 -->
         <div class="right">
           ${courseLabel ? `<div class="course-tag">${courseLabel}</div>` : ''}
           <div class="stars" aria-label="${r.stars} stars">${stars}</div>
@@ -260,7 +261,7 @@ function tryRenderFromCache(){
     const raw = localStorage.getItem(CACHE_KEY);
     if(!raw) return false;
     const { ts, qaAll, revAll } = JSON.parse(raw);
-    if(!ts || Date.now()-ts > CACHE_TTL_MS) return false; // 過期
+    if(!ts || Date.now()-ts > CACHE_TTL_MS) return false;
     state.qaAll = qaAll || [];
     state.revAll = revAll || [];
     state.qaPage = 1; state.revPage = 1;
@@ -330,8 +331,7 @@ tabs.forEach(t=>{
     Object.values(panels).forEach(p=>p.setAttribute('aria-hidden','true'));
     t.setAttribute('aria-selected','true');
     panels[t.id].setAttribute('aria-hidden','false');
-    // 在 iframe 內，切換內容後也主動回報高度
-    postHeight();
+    postHeight(); // 切換後回報高度
   });
 });
 
