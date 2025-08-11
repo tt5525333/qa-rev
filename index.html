@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>提問 / 評價（快取 + Loading）</title>
+<style>
+/* 背景與容器 */
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial;background:#F7F7F7;}
+.container{max-width:900px;margin:0 auto;padding:20px 16px;}
+
+/* 置中 Tabs */
+.tabs{position:relative;background:#F7F7F7;padding:18px 0 10px;}
+.tabs::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:#ddd;}
+.tabbar{display:flex;justify-content:center;gap:56px;margin:0;padding:0;list-style:none;}
+.tab{position:relative;background:none;border:0;cursor:pointer;font-weight:800;font-size:22px;color:#6b7280;padding:4px 2px 14px;}
+.tab[aria-selected="true"]{color:#111827;}
+.tab[aria-selected="true"]::after{content:"";position:absolute;left:50%;bottom:-2px;transform:translateX(-50%);width:88px;height:6px;background:#111827;border-radius:3px;}
+
+/* Panels */
+.panel{display:none}
+.panel[aria-hidden="false"]{display:block}
+
+/* 卡片 */
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;margin-bottom:16px;box-shadow:0 2px 6px rgba(0,0,0,.05);}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px;}
+.left{display:flex;align-items:center;gap:12px;}
+.avatar{width:50px;height:50px;border-radius:50%;overflow:hidden;flex:0 0 50px;background:#eee;}
+.avatar img{width:100%;height:100%;object-fit:cover;display:block;}
+.name{font-weight:800;color:#111827}
+.meta{font-size:12px;color:#94a3b8}
+.badge{font-weight:800;color:#f59e0b;white-space:nowrap;}
+.stars{color:#f59e0b;letter-spacing:2px;white-space:nowrap;}
+.body{color:#374151;line-height:1.8;font-size:16px}
+
+/* 右上角課名＋星星 */
+.right{display:flex;align-items:center;gap:12px;white-space:nowrap;}
+.course-tag{
+  font-weight:700;font-size:14px;color:#0f172a;
+  background:#eef2ff;border:1px solid #c7d2fe;
+  padding:6px 10px;border-radius:10px;
+}
+
+/* 分頁器（含省略號） */
+.pager-wrap{display:flex;justify-content:center;margin-top:20px}
+.pager{display:flex;gap:8px;flex-wrap:wrap}
+.pager button,.pager .ellipsis{
+  min-width:40px;height:40px;padding:0 10px;border:1px solid #e5e7eb;background:#fff;border-radius:8px;
+  font-weight:700;color:#374151;cursor:pointer;
+}
+.pager .ellipsis{display:inline-flex;align-items:center;justify-content:center;color:#9ca3af;border-color:#eee;cursor:default}
+.pager button[disabled]{opacity:.5;cursor:not-allowed}
+.pager .active{border-color:#2563eb;color:#2563eb}
+
+/* Loading Skeleton */
+.skeleton{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;margin-bottom:16px}
+.shimmer{position:relative;overflow:hidden;background:#eee;border-radius:8px;height:14px;margin:10px 0}
+.shimmer::after{content:"";position:absolute;inset:0;transform:translateX(-100%);
+  background:linear-gradient(90deg, transparent, rgba(255,255,255,.6), transparent);
+  animation:shine 1.1s infinite;}
+.s-avatar{width:50px;height:50px;border-radius:50%;background:#e5e7eb;margin-right:12px}
+.s-head{display:flex;align-items:center;margin-bottom:12px}
+@keyframes shine{to{transform:translateX(100%)}}
+
+@media (max-width:640px){
+  .tabbar{gap:32px}
+  .tab{font-size:18px}
+  .tab[aria-selected="true"]::after{width:64px}
+  .card-head{flex-direction:column;align-items:flex-start}
+}
+</style>
+</head>
+<body>
+
+<!-- Tabs -->
+<nav class="tabs" role="tablist" aria-label="學員互動">
+  <ul class="tabbar">
+    <!-- 預設改為：提問 = false、評價 = true -->
+    <li><button id="tab-qa"  class="tab" role="tab" aria-controls="panel-qa"  aria-selected="false">提問</button></li>
+    <li><button id="tab-rev" class="tab" role="tab" aria-controls="panel-rev" aria-selected="true">評價</button></li>
+  </ul>
+</nav>
+
+<div class="container">
+  <!-- 提問：預設隱藏 -->
+  <section id="panel-qa" class="panel" role="tabpanel" aria-labelledby="tab-qa" aria-hidden="true">
+    <div id="qa-list"></div>
+    <div class="pager-wrap"><div id="qa-pager" class="pager" aria-label="提問分頁"></div></div>
+  </section>
+
+  <!-- 評價：預設顯示 -->
+  <section id="panel-rev" class="panel" role="tabpanel" aria-labelledby="tab-rev" aria-hidden="false">
+    <div id="rev-list"></div>
+    <div class="pager-wrap"><div id="rev-pager" class="pager" aria-label="評價分頁"></div></div>
+  </section>
+</div>
+
+<script>
+/* ===== 你的設定 ===== */
+const API_URL = 'https://script.google.com/macros/s/AKfycbzK2fI0SQRp8WaRR6yXay4e1lozao1DOnEasy0EjiAWheK05uXBT2vrKTUxzXxHgJdx/exec'; // 換成 /exec 連結
+const DEFAULT_AVATAR = 'https://i.ibb.co/23PY9v5z/image.jpg';
+const PER_PAGE = 5;
+
+/* 課程對照表（1-4） */
+const COURSE_MAP = {
+  '1': '【班級溝通】破解親師生誤解壓力三角的實戰心法',
+  '2': '【防雷溝通】法律風險與教師自保的溝通策略',
+  '3': '【安定溝通】情緒穩住與不卑不亢的對話力',
+  '4': '【善意溝通】從衝突到共識建立雙贏關係'
+};
+
+/* 快取設定：key 與有效期限（毫秒） */
+const CACHE_KEY = 'qa_rev_cache_v1';
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 小時
+
+/* ===== 時間格式：轉台灣時區 ===== */
+function fmtTime(t){
+  const d = new Date(t);
+  if (isNaN(d.getTime())) return t || '';
+  return d.toLocaleString('zh-TW', {
+    timeZone: 'Asia/Taipei',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false
+  }).replace(/\//g, '/');
+}
+
+/* 捲到標籤欄頂端 */
+function scrollToTabs(){
+  const el = document.querySelector('.tabs');
+  const top = el ? el.offsetTop : 0;
+  window.scrollTo({ top, behavior: 'smooth' });
+}
+
+/* 狀態 */
+const state = { qaPage:1, revPage:1, qaAll:[], revAll:[] };
+
+/* 工具 */
+const h = (s)=>{const d=document.createElement('div');d.innerHTML=s.trim();return d.firstChild;}
+function safeAvatar(url){ return (url && String(url).trim()!=='') ? String(url).trim() : DEFAULT_AVATAR; }
+function attachAvatarFallback(img){ img.addEventListener('error', function onErr(){ if(img.src!==DEFAULT_AVATAR){ img.src=DEFAULT_AVATAR; } img.removeEventListener('error', onErr); }); }
+
+/* Skeleton Loading */
+function showSkeleton(targetId, rows=3){
+  const box = document.getElementById(targetId);
+  let html = '';
+  for(let i=0;i<rows;i++){
+    html += `
+      <div class="skeleton">
+        <div class="s-head">
+          <div class="s-avatar"></div>
+          <div style="flex:1">
+            <div class="shimmer" style="width:160px;height:16px"></div>
+            <div class="shimmer" style="width:220px"></div>
+          </div>
+        </div>
+        <div class="shimmer" style="width:90%"></div>
+        <div class="shimmer" style="width:75%"></div>
+      </div>`;
+  }
+  box.innerHTML = html;
+}
+
+/* 卡片 */
+function questionCard(q){
+  const node = h(`
+    <div class="card">
+      <div class="card-head">
+        <div class="left">
+          <div class="avatar"><img alt="${q.name||''}"></div>
+          <div>
+            <div class="name">${q.name||''}</div>
+            <div class="meta">${fmtTime(q.time)}</div>
+          </div>
+        </div>
+        <div class="badge">💬 提問</div>
+      </div>
+      <div class="body">${q.text||''}</div>
+    </div>
+  `);
+  const img=node.querySelector('img'); img.src=safeAvatar(q.avatar); attachAvatarFallback(img);
+  return node;
+}
+
+function reviewCard(r){
+  const stars='★★★★★'.slice(0, Math.round(Number(r.stars||0)));
+  const courseLabel = COURSE_MAP[(r.course||'').toString().trim()] || (r.course||'');
+  const node = h(`
+    <div class="card">
+      <div class="card-head">
+        <div class="left">
+          <div class="avatar"><img alt="${r.name||''}"></div>
+          <div>
+            <div class="name">${r.name||''}</div>
+            <div class="meta">${fmtTime(r.time)}</div>
+          </div>
+        </div>
+        <!-- 右上角：課名 + 星星 -->
+        <div class="right">
+          ${courseLabel ? `<div class="course-tag">${courseLabel}</div>` : ''}
+          <div class="stars" aria-label="${r.stars} stars">${stars}</div>
+        </div>
+      </div>
+      <div class="body">${r.text||''}</div>
+    </div>
+  `);
+  const img=node.querySelector('img'); img.src=safeAvatar(r.avatar); attachAvatarFallback(img);
+  return node;
+}
+
+/* 分頁（含省略號） */
+function buildPager($wrap, totalPages, current, onChange){
+  $wrap.innerHTML='';
+  const btn=(label,page,disabled=false,active=false)=>{const b=document.createElement('button');b.textContent=label;if(disabled)b.disabled=true;if(active)b.classList.add('active');b.onclick=()=>onChange(page);return b;};
+  const ell=()=>{const s=document.createElement('span');s.className='ellipsis';s.textContent='…';return s;};
+
+  $wrap.appendChild(btn('‹', Math.max(1,current-1), current===1));
+  const set=new Set([1,totalPages,current,current-1,current+1,2,totalPages-1]);
+  const pages=[...set].filter(p=>p>=1&&p<=totalPages).sort((a,b)=>a-b);
+  let prev=0;
+  pages.forEach(p=>{ if(p-prev>1)$wrap.appendChild(ell()); $wrap.appendChild(btn(String(p), p, false, p===current)); prev=p; });
+  $wrap.appendChild(btn('›', Math.min(totalPages,current+1), current===totalPages));
+}
+
+/* 渲染列表 */
+function renderQA(){
+  const list=document.getElementById('qa-list');
+  const pager=document.getElementById('qa-pager');
+  const totalPages=Math.max(1, Math.ceil(state.qaAll.length/PER_PAGE));
+  const start=(state.qaPage-1)*PER_PAGE;
+  list.innerHTML=''; state.qaAll.slice(start,start+PER_PAGE).forEach(q=>list.appendChild(questionCard(q)));
+  buildPager(pager, totalPages, state.qaPage, p=>{ state.qaPage=p; renderQA(); scrollToTabs(); });
+}
+function renderREV(){
+  const list=document.getElementById('rev-list');
+  const pager=document.getElementById('rev-pager');
+  const totalPages=Math.max(1, Math.ceil(state.revAll.length/PER_PAGE));
+  const start=(state.revPage-1)*PER_PAGE;
+  list.innerHTML=''; state.revAll.slice(start,start+PER_PAGE).forEach(r=>list.appendChild(reviewCard(r)));
+  buildPager(pager, totalPages, state.revPage, p=>{ state.revPage=p; renderREV(); scrollToTabs(); });
+}
+
+/* 讀取快取（若新鮮則直接渲染） */
+function tryRenderFromCache(){
+  try{
+    const raw = localStorage.getItem(CACHE_KEY);
+    if(!raw) return false;
+    const { ts, qaAll, revAll } = JSON.parse(raw);
+    if(!ts || Date.now()-ts > CACHE_TTL_MS) return false; // 過期
+    state.qaAll = qaAll || [];
+    state.revAll = revAll || [];
+    state.qaPage = 1; state.revPage = 1;
+    renderQA(); renderREV();
+    return true;
+  }catch(_){ return false; }
+}
+
+/* 儲存快取 */
+function saveCache(){
+  try{
+    localStorage.setItem(CACHE_KEY, JSON.stringify({
+      ts: Date.now(),
+      qaAll: state.qaAll,
+      revAll: state.revAll
+    }));
+  }catch(_){}
+}
+
+/* 從 API 抓資料 */
+async function fetchRemote(){
+  try{
+    const res=await fetch(API_URL+'?table=all&ts='+Date.now());
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const json=await res.json();
+
+    const Q = Array.isArray(json.questions)?json.questions:[];
+    const R = Array.isArray(json.reviews)?json.reviews:[];
+    const normalizeR = r=>({
+      name:r.name||'',
+      time:r.time||'',
+      avatar:r.avatar||'',
+      stars:Number(r.stars||0),
+      text:r.text||'',
+      course:(r.course||'').toString().trim()
+    });
+    const byTimeDesc=(a,b)=> new Date(b.time) - new Date(a.time);
+
+    state.qaAll  = Q.sort(byTimeDesc);
+    state.revAll = R.map(normalizeR).sort(byTimeDesc);
+    state.qaPage=1; state.revPage=1;
+
+    renderQA(); renderREV();
+    saveCache();
+  }catch(err){
+    console.error('fetchRemote error:', err);
+  }
+}
+
+/* 入口：優先快取 → 背景更新；沒快取就顯示 Loading Skeleton */
+function init(){
+  const hadCache = tryRenderFromCache();
+  if(!hadCache){
+    showSkeleton('qa-list', 3);
+    showSkeleton('rev-list', 3);
+  }
+  fetchRemote();
+}
+
+/* Tabs 切換 */
+const tabs=document.querySelectorAll('.tab');
+const panels={'tab-qa':document.getElementById('panel-qa'),'tab-rev':document.getElementById('panel-rev')};
+tabs.forEach(t=>{
+  t.addEventListener('click', ()=>{
+    tabs.forEach(x=>x.setAttribute('aria-selected','false'));
+    Object.values(panels).forEach(p=>p.setAttribute('aria-hidden','true'));
+    t.setAttribute('aria-selected','true');
+    panels[t.id].setAttribute('aria-hidden','false');
+    scrollToTabs();
+  });
+});
+
+/* 啟動 */
+init();
+</script>
+
+</body>
+</html>
