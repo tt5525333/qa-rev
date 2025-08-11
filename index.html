@@ -30,15 +30,27 @@ body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Ar
 .name{font-weight:800;color:#111827}
 .meta{font-size:12px;color:#94a3b8}
 .badge{font-weight:800;color:#f59e0b;white-space:nowrap;}
-.stars{color:#f59e0b;letter-spacing:2px;white-space:nowrap;}
 .body{color:#374151;line-height:1.8;font-size:16px}
 
-/* 右上角課名＋星星 */
-.right{display:flex;align-items:center;gap:12px;white-space:nowrap;}
+/* 右上角課名＋星星：修正版 */
+.right{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  flex-wrap:wrap;         /* 允許換行 */
+  white-space:normal;     /* 解除 nowrap */
+  max-width:100%;
+}
 .course-tag{
   font-weight:700;font-size:14px;color:#0f172a;
   background:#eef2ff;border:1px solid #c7d2fe;
   padding:6px 10px;border-radius:10px;
+  min-width:0;            /* 讓 flex item 可縮 */
+}
+.stars{
+  color:#f59e0b;letter-spacing:2px;
+  white-space:nowrap;     /* 星星本身不拆字 */
+  flex:0 0 auto;          /* 避免被壓縮變換行 */
 }
 
 /* 分頁器（含省略號） */
@@ -67,6 +79,13 @@ body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Ar
   .tab{font-size:18px}
   .tab[aria-selected="true"]::after{width:64px}
   .card-head{flex-direction:column;align-items:flex-start}
+  .right{width:100%}
+  .course-tag{
+    max-width:100%;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
 }
 </style>
 </head>
@@ -75,20 +94,17 @@ body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Ar
 <!-- Tabs -->
 <nav class="tabs" role="tablist" aria-label="學員互動">
   <ul class="tabbar">
-    <!-- 預設改為：提問 = false、評價 = true -->
     <li><button id="tab-qa"  class="tab" role="tab" aria-controls="panel-qa"  aria-selected="false">提問</button></li>
     <li><button id="tab-rev" class="tab" role="tab" aria-controls="panel-rev" aria-selected="true">評價</button></li>
   </ul>
 </nav>
 
 <div class="container">
-  <!-- 提問：預設隱藏 -->
   <section id="panel-qa" class="panel" role="tabpanel" aria-labelledby="tab-qa" aria-hidden="true">
     <div id="qa-list"></div>
     <div class="pager-wrap"><div id="qa-pager" class="pager" aria-label="提問分頁"></div></div>
   </section>
 
-  <!-- 評價：預設顯示 -->
   <section id="panel-rev" class="panel" role="tabpanel" aria-labelledby="tab-rev" aria-hidden="false">
     <div id="rev-list"></div>
     <div class="pager-wrap"><div id="rev-pager" class="pager" aria-label="評價分頁"></div></div>
@@ -96,24 +112,18 @@ body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Ar
 </div>
 
 <script>
-/* ===== 你的設定 ===== */
 const API_URL = 'https://script.google.com/macros/s/AKfycbzK2fI0SQRp8WaRR6yXay4e1lozao1DOnEasy0EjiAWheK05uXBT2vrKTUxzXxHgJdx/exec';
 const DEFAULT_AVATAR = 'https://i.ibb.co/23PY9v5z/image.jpg';
 const PER_PAGE = 5;
-
-/* 課程對照表（1-4） */
 const COURSE_MAP = {
   '1': '【班級溝通】破解親師生誤解壓力三角的實戰心法',
   '2': '【防雷溝通】法律風險與教師自保的溝通策略',
   '3': '【安定溝通】情緒穩住與不卑不亢的對話力',
   '4': '【善意溝通】從衝突到共識建立雙贏關係'
 };
-
-/* 快取設定：key 與有效期限（毫秒） */
 const CACHE_KEY = 'qa_rev_cache_v1';
-const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 小時
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
-/* ===== 時間格式：轉台灣時區 ===== */
 function fmtTime(t){
   const d = new Date(t);
   if (isNaN(d.getTime())) return t || '';
@@ -124,37 +134,15 @@ function fmtTime(t){
     hour12: false
   }).replace(/\//g, '/');
 }
-
-/* ===== iframe 自動高度：回報父頁面（防抖＋變更才回報） ===== */
-function debounce(fn, wait=80){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), wait); }; }
-let lastH = 0;
-const postHeight = debounce(() => {
-  const h = Math.max(120, Math.min(5000, document.documentElement.scrollHeight));
-  if (Math.abs(h - lastH) > 5) {
-    lastH = h;
-    window.parent?.postMessage({ type:'setHeight', height:h }, '*');
-  }
-}, 50);
-window.addEventListener('load', postHeight);
-window.addEventListener('resize', postHeight);
-new MutationObserver(postHeight).observe(document.body, { childList:true, subtree:true, attributes:true, characterData:true });
-
-/* 捲到標籤欄頂端（非 iframe 情境用） */
 function scrollToTabs(){
   const el = document.querySelector('.tabs');
   const top = el ? el.offsetTop : 0;
   window.scrollTo({ top, behavior: 'smooth' });
 }
-
-/* 狀態 */
 const state = { qaPage:1, revPage:1, qaAll:[], revAll:[] };
-
-/* 工具 */
 const h = (s)=>{const d=document.createElement('div');d.innerHTML=s.trim();return d.firstChild;}
 function safeAvatar(url){ return (url && String(url).trim()!=='') ? String(url).trim() : DEFAULT_AVATAR; }
 function attachAvatarFallback(img){ img.addEventListener('error', function onErr(){ if(img.src!==DEFAULT_AVATAR){ img.src=DEFAULT_AVATAR; } img.removeEventListener('error', onErr); }); }
-
-/* Skeleton Loading */
 function showSkeleton(targetId, rows=3){
   const box = document.getElementById(targetId);
   let html = '';
@@ -174,8 +162,6 @@ function showSkeleton(targetId, rows=3){
   }
   box.innerHTML = html;
 }
-
-/* 卡片 */
 function questionCard(q){
   const node = h(`
     <div class="card">
@@ -195,7 +181,6 @@ function questionCard(q){
   const img=node.querySelector('img'); img.src=safeAvatar(q.avatar); attachAvatarFallback(img);
   return node;
 }
-
 function reviewCard(r){
   const stars='★★★★★'.slice(0, Math.round(Number(r.stars||0)));
   const courseLabel = COURSE_MAP[(r.course||'').toString().trim()] || (r.course||'');
@@ -220,13 +205,10 @@ function reviewCard(r){
   const img=node.querySelector('img'); img.src=safeAvatar(r.avatar); attachAvatarFallback(img);
   return node;
 }
-
-/* 分頁（含省略號） */
 function buildPager($wrap, totalPages, current, onChange){
   $wrap.innerHTML='';
   const btn=(label,page,disabled=false,active=false)=>{const b=document.createElement('button');b.textContent=label;if(disabled)b.disabled=true;if(active)b.classList.add('active');b.onclick=()=>onChange(page);return b;};
   const ell=()=>{const s=document.createElement('span');s.className='ellipsis';s.textContent='…';return s;};
-
   $wrap.appendChild(btn('‹', Math.max(1,current-1), current===1));
   const set=new Set([1,totalPages,current,current-1,current+1,2,totalPages-1]);
   const pages=[...set].filter(p=>p>=1&&p<=totalPages).sort((a,b)=>a-b);
@@ -234,16 +216,13 @@ function buildPager($wrap, totalPages, current, onChange){
   pages.forEach(p=>{ if(p-prev>1)$wrap.appendChild(ell()); $wrap.appendChild(btn(String(p), p, false, p===current)); prev=p; });
   $wrap.appendChild(btn('›', Math.min(totalPages,current+1), current===totalPages));
 }
-
-/* 渲染列表 */
 function renderQA(){
   const list=document.getElementById('qa-list');
   const pager=document.getElementById('qa-pager');
   const totalPages=Math.max(1, Math.ceil(state.qaAll.length/PER_PAGE));
   const start=(state.qaPage-1)*PER_PAGE;
   list.innerHTML=''; state.qaAll.slice(start,start+PER_PAGE).forEach(q=>list.appendChild(questionCard(q)));
-  buildPager(pager, totalPages, state.qaPage, p=>{ state.qaPage=p; renderQA(); postHeight(); });
-  postHeight();
+  buildPager(pager, totalPages, state.qaPage, p=>{ state.qaPage=p; renderQA(); scrollToTabs(); });
 }
 function renderREV(){
   const list=document.getElementById('rev-list');
@@ -251,11 +230,8 @@ function renderREV(){
   const totalPages=Math.max(1, Math.ceil(state.revAll.length/PER_PAGE));
   const start=(state.revPage-1)*PER_PAGE;
   list.innerHTML=''; state.revAll.slice(start,start+PER_PAGE).forEach(r=>list.appendChild(reviewCard(r)));
-  buildPager(pager, totalPages, state.revPage, p=>{ state.revPage=p; renderREV(); postHeight(); });
-  postHeight();
+  buildPager(pager, totalPages, state.revPage, p=>{ state.revPage=p; renderREV(); scrollToTabs(); });
 }
-
-/* 讀取快取（若新鮮則直接渲染） */
 function tryRenderFromCache(){
   try{
     const raw = localStorage.getItem(CACHE_KEY);
@@ -269,8 +245,6 @@ function tryRenderFromCache(){
     return true;
   }catch(_){ return false; }
 }
-
-/* 儲存快取 */
 function saveCache(){
   try{
     localStorage.setItem(CACHE_KEY, JSON.stringify({
@@ -280,14 +254,11 @@ function saveCache(){
     }));
   }catch(_){}
 }
-
-/* 從 API 抓資料 */
 async function fetchRemote(){
   try{
     const res=await fetch(API_URL+'?table=all&ts='+Date.now());
     if(!res.ok) throw new Error('HTTP '+res.status);
     const json=await res.json();
-
     const Q = Array.isArray(json.questions)?json.questions:[];
     const R = Array.isArray(json.reviews)?json.reviews:[];
     const normalizeR = r=>({
@@ -299,20 +270,15 @@ async function fetchRemote(){
       course:(r.course||'').toString().trim()
     });
     const byTimeDesc=(a,b)=> new Date(b.time) - new Date(a.time);
-
     state.qaAll  = Q.sort(byTimeDesc);
     state.revAll = R.map(normalizeR).sort(byTimeDesc);
     state.qaPage=1; state.revPage=1;
-
     renderQA(); renderREV();
     saveCache();
-    postHeight();
   }catch(err){
     console.error('fetchRemote error:', err);
   }
 }
-
-/* 入口：優先快取 → 背景更新；沒快取就顯示 Loading Skeleton */
 function init(){
   const hadCache = tryRenderFromCache();
   if(!hadCache){
@@ -321,8 +287,6 @@ function init(){
   }
   fetchRemote();
 }
-
-/* Tabs 切換 */
 const tabs=document.querySelectorAll('.tab');
 const panels={'tab-qa':document.getElementById('panel-qa'),'tab-rev':document.getElementById('panel-rev')};
 tabs.forEach(t=>{
@@ -331,11 +295,9 @@ tabs.forEach(t=>{
     Object.values(panels).forEach(p=>p.setAttribute('aria-hidden','true'));
     t.setAttribute('aria-selected','true');
     panels[t.id].setAttribute('aria-hidden','false');
-    postHeight(); // 切換後回報高度
+    scrollToTabs();
   });
 });
-
-/* 啟動 */
 init();
 </script>
 
